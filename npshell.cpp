@@ -16,6 +16,7 @@ struct my_cmd{
 	vector<string> argv;
 	int pipe_to = 0;
 	string store_addr = "";
+	bool err;
 };
 
 vector<my_cmd> C;
@@ -26,132 +27,19 @@ map< int, int > pipe_num_to; // pipe_num, counter
 string command_list[] = {"cat", "ls", "noop", "number", "removetag", "removetag0", "exit"};
 int cmd_list_size = sizeof(command_list)/sizeof(command_list[0]);
 
-void err_sys(const char* x) 
-{ 
-    perror(x); 
-    exit(1); 
-}
+void err_sys(const char* x);
+void sig_chld(int signo);
 
-ssize_t	writen(int fid, const char *buf, size_t size)
-{
-	size_t	nremain;
-	ssize_t	nwritten;
-	const char *buf_now;
+ssize_t writen(int fid, const char *buf, size_t size);
+void Writen(int fid, char *buf, size_t size);
+ssize_t	readn(int fid, char *buf, size_t size);
+ssize_t Readn(int fid, char *buf, size_t size);
 
-	buf_now = buf;
-	nremain = size;
-	while (nremain > 0) {
-		if ( (nwritten = write(fid, buf_now, nremain)) <= 0) {
-			// not interrupt by write()
-			if (nwritten < 0 && errno == EINTR)
-				nwritten = 0;
-			// error
-			else
-				return -1;
-		}
+void check_need_data(bool &need, int (&p_num)[2]);
+void update_pipe_num_to();
 
-		nremain -= nwritten;
-		buf_now += nwritten;
-	}
-	return(size);
-}
-
-void Writen(int fid, char *buf, size_t size)
-{
-	if (writen(fid, buf, size) != size)
-		err_sys("writen error");
-}
-
-ssize_t	readn(int fd, char *vptr, size_t size)
-{
-	size_t nremain;
-	ssize_t	nread;
-	char *ptr;
-
-	ptr = vptr;
-	nremain = size;
-	while (nremain > 0) {
-		if ( (nread = read(fd, ptr, nremain)) < 0) {
-			if (errno == EINTR)
-				nread = 0;
-			else
-				return(-1);
-		} else if (nread == 0) // EOF
-			break;
-
-		nremain -= nread;
-		ptr   += nread;
-	}
-	return(size - nremain);
-}
-
-ssize_t Readn(int fid, char *buf, size_t size)
-{
-	ssize_t	n;
-
-	if ( (n = readn(fid, buf, size)) < 0)
-		err_sys("readn error");
-	return(n);
-}
-
-void check_need_data(bool &need, int (&p_num)[2]){
-	bool create_pipe = false;
-	char buf[1024];
-	for (auto s: pipe_num_to) {
-		if (s.second == 0) {
-			if (!create_pipe) {
-				create_pipe = true;
-				pipe(p_num);
-			}
-			while (Readn(s.first, buf, 1024) > 0) {
-				Writen(p_num[1], buf, 1024);
-			}
-		}
-		pipe_num_to.erase(s.first);
-	}
-	close(p_num[1]);
-}
-
-void update_pipe_num_to() {
-	for (auto &s:pipe_num_to) {
-		s.second--;
-	}
-}
-
-void add_cmd(my_cmd &cmd, string new_cmd) {
-	if (cmd.argv.size() != 0) C.push_back(cmd);
-	cmd.argv.clear();
-	cmd.pipe_to = 0;
-	cmd.store_addr = "";
-}
-
-void process_pipe_info(my_cmd &cmd, string &s) {
-	if (s == "|") {
-		cmd.pipe_to = 1;
-		return;
-	}
-	for (int i = 1; i < s.size(); i++)
-		cmd.pipe_to = cmd.pipe_to *10 + (int)(s[i] - '0');
-}
-
-void sig_chld(int signo)
-{
-	int	pid, stat;
-
-	while ( (pid = waitpid(-1, &stat, WNOHANG)) > 0){
-        // printf("child %d terminated\n", pid);
-		
-		// free the memory!!
-		char **cmd_argv = argvs_of_cmd[pid];
-		int cmd_argc = argcs_of_cmd[pid];
-		argvs_of_cmd.erase(pid);
-		argcs_of_cmd.erase(pid);
-		
-		free(cmd_argv);
-    }
-
-	return;
-}
+void add_cmd(my_cmd &cmd, string new_cmd);
+void process_pipe_info(my_cmd &cmd, string &s);
 
 int main(void){
 	signal(SIGCHLD, sig_chld);
@@ -164,7 +52,7 @@ int main(void){
 	string s;
 	char **cmd_argv;
 	while(should_run){
-		cout << "\n%"; fflush(stdout);
+		printf("\n%%"); fflush(stdout);
 		strcpy(buf, "");
 		s = "";
 		int input_length = read(0, buf ,MAX_LINE);
@@ -193,7 +81,7 @@ int main(void){
 						
 						// get pipe,storage,argument
 						if (!find) {
-							if (s[0] == '|') process_pipe_info(tmp, s);
+							if (s[0] == '|' || s[0] == '!') process_pipe_info(tmp, s);
 							else if(s == ">") storage_flg = true;
 							else tmp.argv.push_back(s);
 						}
@@ -209,7 +97,7 @@ int main(void){
 		}
 		
 		// execute the command
-		for (int i = 0; i < C.size(); i++) {			
+		for (int i = 0; i < C.size(); i++) {	
 			int cmd_argc = C[i].argv.size();
 			cmd_argv = (char**) malloc(sizeof(char*) * (cmd_argc+1));
 
@@ -217,15 +105,15 @@ int main(void){
 			int pid, p_num[2], data_pipe[2];
 
 			if (need_pipe) pipe(p_num);
-			// check_need_data(need_data, data_pipe);
+			check_need_data(need_data, data_pipe);
 
 			// fork
 			pid = fork();
 			if (pid < 0) {
-				cout << "failed to fork\n";
+				printf("failed to fork\n");
 				return -1;
 			}
-
+		
 			// parent do
 			if (pid > 0) {
 				// record memory allocate address
@@ -252,9 +140,9 @@ int main(void){
 			cmd_argv[cmd_argc] = NULL;
 			
 			// received data from other process
-			// if (need_data){
-			// 	dup2(data_pipe[0], STDIN_FILENO);
-			// }
+			if (need_data){
+				dup2(data_pipe[0], STDIN_FILENO);
+			}
 
 			// need to pipe data to other process
 			if (need_pipe) {
@@ -262,9 +150,25 @@ int main(void){
 				dup2(p_num[1], STDOUT_FILENO);
 			}
 
+			// pipe stderr
+			if (C[i].err) dup2(p_num[1], STDERR_FILENO);
+
+			// store
+			// for (auto a:C[i].argv) cout << a << " "; cout << endl;
+			if (C[i].store_addr.size() != 0) {
+				int file_id = open(C[i].store_addr.data(), O_WRONLY|O_CREAT, 00777);
+				if (file_id < 0) {
+					printf("Failed to open file %s\n", C[i].store_addr.data());
+					free(cmd_argv);
+					C.clear();
+					break;
+				}
+				dup2(file_id, STDOUT_FILENO);
+			}
+
 			// exec!!!!
 			if (execvp(cmd_argv[0], cmd_argv) < 0) {
-				cout << "Bad command\n";
+				printf("Bad command\n");
 				free(cmd_argv);
 				C.clear();
 				break;
@@ -278,4 +182,146 @@ int main(void){
 		
 	}
 	return 0;
+}
+
+void check_need_data(bool &need, int (&p_num)[2]) {
+	bool create_pipe = false;
+	char buf[1024];
+	vector<int> wait_to_erase;
+	for (auto s: pipe_num_to) {
+		// counter == 0 => pipe the data to the command execute next
+		if (s.second == 0) {
+			need = true;
+			// check if this command is terminated
+			while (argvs_of_cmd.find(s.first) != argvs_of_cmd.end()) {
+				// if not, wait until it's terminated
+				sig_chld(SIGCHLD);
+			}
+
+			if (!create_pipe) {
+				create_pipe = true;
+				pipe(p_num);
+			}
+
+			// read the data to a new pipe, this new pipe may contains mutiple pipes' data
+			int read_size;
+			while ((read_size = Readn(s.first, buf, 1024)) > 0) {
+				Writen(p_num[1], buf, read_size);
+			}
+			wait_to_erase.push_back(s.first);
+		}
+		
+	}
+
+	for (auto s: wait_to_erase) {
+		pipe_num_to.erase(s);
+	}
+
+	close(p_num[1]);
+}
+
+void update_pipe_num_to() {
+	for (auto &s:pipe_num_to) {
+		s.second--;
+	}
+}
+
+void add_cmd(my_cmd &cmd, string new_cmd) {
+	if (cmd.argv.size() != 0) C.push_back(cmd);
+	cmd.argv.clear();
+	cmd.pipe_to = 0;
+	cmd.store_addr = "";
+}
+
+void process_pipe_info(my_cmd &cmd, string &s) {
+	if (s[0] == '!') cmd.err = true;
+	if (s.size() == 1) {
+		cmd.pipe_to = 1;
+		return;
+	}
+	
+	for (int i = 1; i < s.size(); i++)
+		cmd.pipe_to = cmd.pipe_to *10 + (int)(s[i] - '0');
+}
+
+void sig_chld(int signo)
+{
+	int	pid, stat;
+
+	while ( (pid = waitpid(-1, &stat, WNOHANG)) > 0){
+        // printf("child %d terminated\n", pid);
+		
+		// free the memory!!
+		char **cmd_argv = argvs_of_cmd[pid];
+		int cmd_argc = argcs_of_cmd[pid];
+		argvs_of_cmd.erase(pid);
+		argcs_of_cmd.erase(pid);
+		
+		free(cmd_argv);
+    }
+
+	return;
+}
+
+void err_sys(const char* x) { 
+    perror(x); 
+    exit(1); 
+}
+
+ssize_t	writen(int fid, const char *buf, size_t size) {
+	size_t	nremain;
+	ssize_t	nwritten;
+	const char *buf_now;
+
+	buf_now = buf;
+	nremain = size;
+	while (nremain > 0) {
+		if ( (nwritten = write(fid, buf_now, nremain)) <= 0) {
+			// not interrupt by write()
+			if (nwritten < 0 && errno == EINTR)
+				nwritten = 0;
+			// error
+			else
+				return -1;
+		}
+
+		nremain -= nwritten;
+		buf_now += nwritten;
+	}
+	return(size);
+}
+
+void Writen(int fid, char *buf, size_t size) {
+	if (writen(fid, buf, size) != size)
+		err_sys("writen error");
+}
+
+ssize_t	readn(int fid, char *buf, size_t size) {
+	size_t nremain;
+	ssize_t	nread;
+	char *buf_now;
+
+	buf_now = buf;
+	nremain = size;
+	while (nremain > 0) {
+		if ( (nread = read(fid, buf_now, nremain)) < 0) {
+			if (errno == EINTR)
+				nread = 0;
+			else
+				return(-1);
+		} else if (nread == 0) // EOF
+			break;
+		nremain -= nread;
+		buf_now += nread;
+	}
+	return(size - nremain);
+}
+
+ssize_t Readn(int fid, char *buf, size_t size) {
+	int	n;
+
+	if ( (n = readn(fid, buf, size)) < 0)
+		err_sys("readn error");
+	
+	return(n);
 }
