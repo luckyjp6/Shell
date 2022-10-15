@@ -16,14 +16,16 @@ struct my_cmd{
 	vector<string> argv;
 	int pipe_to = 0;
 	string store_addr = "";
-	bool err;
-	bool number_pipe;
+	bool err = false;
+	bool number_pipe = false;
+	bool next_line = false;
 };
 
 vector<my_cmd> C;
 map< int, char** > argvs_of_cmd;
 map< int, int > argcs_of_cmd;
 map< int, int > pipe_num_to; // pipe_num, counter
+my_cmd tmp;
 
 string command_list[] = {"cat", "ls", "noop", "number", "removetag", "removetag0", "exit", "printenv", "setenv"};
 int cmd_list_size = sizeof(command_list)/sizeof(command_list[0]);
@@ -39,42 +41,53 @@ ssize_t Readn(int fid, char *buf, size_t size);
 void check_need_data(bool &need, int (&p_num)[2]);
 void update_pipe_num_to();
 
-void add_cmd(my_cmd &cmd, string new_cmd);
-void process_pipe_info(my_cmd &cmd, string &s);
+void clear_tmp();
+void process_pipe_info(string s);
 
 int main(void){
 	signal(SIGCHLD, sig_chld);
 
 	int should_run = 1; 
 
-	char buf[MAX_LINE];
-	// string buf;
-
-	my_cmd tmp;
+	// char buf[MAX_LINE];
+// int file_no = open("1.txt", O_RDONLY);
+	// my_cmd tmp;
 	string s;
 	char **cmd_argv;
 	while(should_run){
-		printf("%%"); fflush(stdout);
-		strcpy(buf, "");
-		// buf = "";
-		s = "";
+		printf("%% "); fflush(stdout);
+		// strcpy(buf, "");
+		
 		int input_length;
-		input_length = read(STDIN_FILENO, buf ,MAX_LINE);
+
+		// input_length = read(0, buf ,MAX_LINE);
+		string buf = "";
+		getline(cin, buf);
+		input_length = buf.size();
 
 		if (input_length < 0) {
 			err_sys("failed to read\n");
 			return -1;
 		}else if (input_length == 0){
 		 	cout << "nothing\n";
+			// goto again;
 		 	return -1;
 		}
-
+		
+		// if (buf[input_length-1] != '\n') buf[input_length++] = '\n';
+		if (buf[input_length-1] != '\n') {
+			buf += '\n';
+			input_length ++;
+		}
 		update_pipe_num_to();
-
+		
+		s = "";
 		// process the argument
 		bool storage_flg = false;
 		for(int i = 0; i < input_length; i++){
-			if(buf[i] == ' ' || i == input_length-1){ 
+			if(buf[i] == ' ' || i == input_length-1 || buf[i] == '\n' || buf[i] == '\r'){
+				// printf("args: %s\n", s.data());
+				if (buf[i] == '\n' || buf[i] == '\r') tmp.next_line = true; 
 				if (s.size() > 0) {
 					// store the path
 					if (storage_flg) {
@@ -86,17 +99,19 @@ int main(void){
 						bool find = false;
 						for (int j = 0; j < cmd_list_size; j++) {
 							if (s == command_list[j]) {
-								add_cmd(tmp, s);
+								if (tmp.argv.size() != 0) C.push_back(tmp);
+								clear_tmp();
 								tmp.argv.push_back(s);
+								// for (auto t:tmp.argv) cout << t << " " << endl;
 								find = true;
 								break;
 							}
 						}
-						
+										
 						// get pipe,storage,argument
 						if (!find) {
 							if (s == "|") tmp.pipe_to = 1;
-							else if(s[0] == '|' || s[0] == '!') process_pipe_info(tmp, s);
+							else if(s[0] == '|' || s[0] == '!') process_pipe_info(s);
 							else if(s == ">") storage_flg = true;
 							else tmp.argv.push_back(s);
 						}
@@ -104,30 +119,54 @@ int main(void){
 						s = "";
 					}
 				}
-			}else {
-				s = s + buf[i];
-			}
+			}else s = s + buf[i];
+			
 			// store the last command
-			if (i == input_length-1) add_cmd(tmp, "");
+			if (i == input_length-1 || buf[i] == '\n' || buf[i] == '\r') {
+				if (tmp.argv.size() != 0) C.push_back(tmp);
+				clear_tmp();
+			};
 		}
-		
+// for (auto s:C){
+// 	for (int i = 0; i < s.argv.size(); i++) cout << s.argv[i] << " ";
+// 	cout << endl; 
+// }
 		// execute the command
 		for (int i = 0; i < C.size(); i++) {
 			if (C[i].argv[0] == "exit") {
 				C.clear();
 				should_run = false;
 				break;
-			}	
+			}
+			if (C[i].argv[0] == "setenv") {
+				if (C[i].argv.size() < 3) {
+					cout << "Usage: setenv [Variable] [Value].\n";
+					// Writen(1, err_msg, sizeof(err_msg));
+					continue;
+				}
+				setenv(C[i].argv[1].data(), C[i].argv[2].data(), 1);
+				// C.clear();
+				continue;
+			}
+			if (C[i].argv[0] == "printenv") {
+				if (C[i].argv.size() < 2) {
+					cout << "Usage: printenv [Variable].\n";
+					// Writen(1, err_msg, sizeof(err_msg));
+					continue;
+				}
+				char* env_info = getenv(C[i].argv[1].data());
+				if (env_info != NULL) printf("%s\n", env_info);
+				// C.clear();
+				continue;
+			}
 
 			int cmd_argc = C[i].argv.size();
 			cmd_argv = (char**) malloc(sizeof(char*) * (cmd_argc+1));
 
-			bool need_data, need_pipe = (C[i].pipe_to > 0);//, ordi_pipe_flg = (ordinary_pipe > 0);
+			bool need_data, need_pipe = (C[i].pipe_to > 0);
 			int pid, p_num[2], data_pipe[2];
 
 			if (need_pipe) pipe(p_num);
-			// ordinary pipe -> next command will receive the data
-			// if (!C[i].number_pipe && C[i].pipe_to > 0) ordinary_pipe = p_num[0];
 			
 			// fork
 			pid = fork();
@@ -151,6 +190,7 @@ int main(void){
 						// number pipe -> new line
 						update_pipe_num_to();
 					}
+					else if (C[i].next_line)update_pipe_num_to();
 					else pipe_num_to.insert(pair<int, int>(p_num[0], 0));
 				}
 
@@ -194,10 +234,8 @@ int main(void){
 
 			// exec!!!!
 			if (execvp(cmd_argv[0], cmd_argv) < 0) {
-				printf("Bad command\n");
-				free(cmd_argv);
-				C.clear();
-				break;
+				printf("Unknown command: [%s].\n", cmd_argv[0]);
+				return 0;
 			}
 		}
 
@@ -205,7 +243,7 @@ int main(void){
 		while (!argvs_of_cmd.empty()) {
 			sig_chld(SIGCHLD);			
 		}
-		
+		C.clear();
 	}
 	return 0;
 }
@@ -252,20 +290,20 @@ void update_pipe_num_to() {
 	}
 }
 
-void add_cmd(my_cmd &cmd, string new_cmd) {
-	if (cmd.argv.size() != 0) C.push_back(cmd);
-	cmd.argv.clear();
-	cmd.pipe_to = 0;
-	cmd.store_addr = "";
-	cmd.err = false;
-	cmd.number_pipe = false;
+void clear_tmp() {
+	tmp.argv.clear();
+	tmp.pipe_to = 0;
+	tmp.store_addr = "";
+	tmp.err = false;
+	tmp.number_pipe = false;
+	tmp.next_line = false;
 }
 
-void process_pipe_info(my_cmd &cmd, string &s) {
-	if (s[0] == '!') cmd.err = true;
-	cmd.number_pipe = true;
+void process_pipe_info(string s) {
+	if (s[0] == '!') tmp.err = true;
+	tmp.number_pipe = true;
 	for (int i = 1; i < s.size(); i++)
-		cmd.pipe_to = cmd.pipe_to *10 + (int)(s[i] - '0');
+		tmp.pipe_to = tmp.pipe_to *10 + (int)(s[i] - '0');
 }
 
 void sig_chld(int signo)
