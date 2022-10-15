@@ -17,6 +17,7 @@ struct my_cmd{
 	int pipe_to = 0;
 	string store_addr = "";
 	bool err;
+	bool number_pipe;
 };
 
 vector<my_cmd> C;
@@ -24,7 +25,7 @@ map< int, char** > argvs_of_cmd;
 map< int, int > argcs_of_cmd;
 map< int, int > pipe_num_to; // pipe_num, counter
 
-string command_list[] = {"cat", "ls", "noop", "number", "removetag", "removetag0", "exit"};
+string command_list[] = {"cat", "ls", "noop", "number", "removetag", "removetag0", "exit", "printenv", "setenv"};
 int cmd_list_size = sizeof(command_list)/sizeof(command_list[0]);
 
 void err_sys(const char* x);
@@ -47,15 +48,28 @@ int main(void){
 	int should_run = 1; 
 
 	char buf[MAX_LINE];
+	// string buf;
 
 	my_cmd tmp;
 	string s;
 	char **cmd_argv;
 	while(should_run){
-		printf("\n%%"); fflush(stdout);
+		printf("%%"); fflush(stdout);
 		strcpy(buf, "");
+		// buf = "";
 		s = "";
-		int input_length = read(0, buf ,MAX_LINE);
+		int input_length;
+		input_length = read(STDIN_FILENO, buf ,MAX_LINE);
+
+		if (input_length < 0) {
+			err_sys("failed to read\n");
+			return -1;
+		}else if (input_length == 0){
+		 	cout << "nothing\n";
+		 	return -1;
+		}
+
+		update_pipe_num_to();
 
 		// process the argument
 		bool storage_flg = false;
@@ -81,7 +95,8 @@ int main(void){
 						
 						// get pipe,storage,argument
 						if (!find) {
-							if (s[0] == '|' || s[0] == '!') process_pipe_info(tmp, s);
+							if (s == "|") tmp.pipe_to = 1;
+							else if(s[0] == '|' || s[0] == '!') process_pipe_info(tmp, s);
 							else if(s == ">") storage_flg = true;
 							else tmp.argv.push_back(s);
 						}
@@ -97,23 +112,30 @@ int main(void){
 		}
 		
 		// execute the command
-		for (int i = 0; i < C.size(); i++) {	
+		for (int i = 0; i < C.size(); i++) {
+			if (C[i].argv[0] == "exit") {
+				C.clear();
+				should_run = false;
+				break;
+			}	
+
 			int cmd_argc = C[i].argv.size();
 			cmd_argv = (char**) malloc(sizeof(char*) * (cmd_argc+1));
 
-			bool need_data, need_pipe = (C[i].pipe_to > 0);
+			bool need_data, need_pipe = (C[i].pipe_to > 0);//, ordi_pipe_flg = (ordinary_pipe > 0);
 			int pid, p_num[2], data_pipe[2];
 
 			if (need_pipe) pipe(p_num);
-			check_need_data(need_data, data_pipe);
-
+			// ordinary pipe -> next command will receive the data
+			// if (!C[i].number_pipe && C[i].pipe_to > 0) ordinary_pipe = p_num[0];
+			
 			// fork
 			pid = fork();
 			if (pid < 0) {
 				printf("failed to fork\n");
 				return -1;
 			}
-		
+
 			// parent do
 			if (pid > 0) {
 				// record memory allocate address
@@ -124,11 +146,16 @@ int main(void){
 				// record pipe descripter for the command behind
 				if (need_pipe) {
 					close(p_num[1]);
-					pipe_num_to.insert(pair<int, int>(p_num[0], C[i].pipe_to));
+					if (C[i].number_pipe) {
+						pipe_num_to.insert(pair<int, int>(p_num[0], C[i].pipe_to));
+						// number pipe -> new line
+						update_pipe_num_to();
+					}
+					else pipe_num_to.insert(pair<int, int>(p_num[0], 0));
 				}
 
 				// update pipe_num_to
-				update_pipe_num_to();
+				// update_pipe_num_to();
 				continue;
 			}
 
@@ -138,23 +165,22 @@ int main(void){
 				strcpy(cmd_argv[j], C[i].argv[j].data());
 			}
 			cmd_argv[cmd_argc] = NULL;
-			
 			// received data from other process
+			check_need_data(need_data, data_pipe);
 			if (need_data){
 				dup2(data_pipe[0], STDIN_FILENO);
 			}
 
+			// pipe stderr
+			if (C[i].err) dup2(p_num[1], STDERR_FILENO);
+			
 			// need to pipe data to other process
 			if (need_pipe) {
 				close(p_num[0]);
 				dup2(p_num[1], STDOUT_FILENO);
 			}
-
-			// pipe stderr
-			if (C[i].err) dup2(p_num[1], STDERR_FILENO);
-
+			
 			// store
-			// for (auto a:C[i].argv) cout << a << " "; cout << endl;
 			if (C[i].store_addr.size() != 0) {
 				int file_id = open(C[i].store_addr.data(), O_WRONLY|O_CREAT, 00777);
 				if (file_id < 0) {
@@ -231,15 +257,13 @@ void add_cmd(my_cmd &cmd, string new_cmd) {
 	cmd.argv.clear();
 	cmd.pipe_to = 0;
 	cmd.store_addr = "";
+	cmd.err = false;
+	cmd.number_pipe = false;
 }
 
 void process_pipe_info(my_cmd &cmd, string &s) {
 	if (s[0] == '!') cmd.err = true;
-	if (s.size() == 1) {
-		cmd.pipe_to = 1;
-		return;
-	}
-	
+	cmd.number_pipe = true;
 	for (int i = 1; i < s.size(); i++)
 		cmd.pipe_to = cmd.pipe_to *10 + (int)(s[i] - '0');
 }
@@ -303,14 +327,15 @@ ssize_t	readn(int fid, char *buf, size_t size) {
 
 	buf_now = buf;
 	nremain = size;
-	while (nremain > 0) {
+	while (nremain > 0) { //&& *(buf_now-1) != '\n'
 		if ( (nread = read(fid, buf_now, nremain)) < 0) {
 			if (errno == EINTR)
 				nread = 0;
 			else
-				return(-1);
-		} else if (nread == 0) // EOF
+				return -1;
+		} else if (nread == 0) { // EOF
 			break;
+		}
 		nremain -= nread;
 		buf_now += nread;
 	}
@@ -321,7 +346,6 @@ ssize_t Readn(int fid, char *buf, size_t size) {
 	int	n;
 
 	if ( (n = readn(fid, buf, size)) < 0)
-		err_sys("readn error");
-	
+		err_sys("readn error\n");
 	return(n);
 }
