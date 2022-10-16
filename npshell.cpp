@@ -44,7 +44,7 @@ void process_pipe_info(string s);
 
 
 int main(void){
-	// setenv("PATH", "bin:.", 1);
+	setenv("PATH", "bin:.", 1);
 	signal(SIGCHLD, sig_chld);
 
 	int should_run = 1; 
@@ -107,6 +107,7 @@ int main(void){
 					s = "";
 				}
 			}else s = s + buf[i];			
+			
 			// store the last command
 			if (i == input_length-1 || buf[i] == '\n' || buf[i] == '\r') {
 				if (tmp.argv.size() != 0) C.push_back(tmp);
@@ -167,11 +168,11 @@ int main(void){
 				// record memory allocate address
 				argvs_of_cmd.insert(pair<size_t, char**>(pid, cmd_argv));
 				argcs_of_cmd.insert(pair<size_t, int>(pid, cmd_argc+1));
-
-				if (C[i].number_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], C[i].pipe_to));
-				else pipe_num_to.insert(pair<size_t, int>(p_num[0], 0));
-
+				
 				if (C[i].number_pipe || i == 0) update_pipe_num_to();
+				
+				if (C[i].number_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], C[i].pipe_to-1));
+				else pipe_num_to.insert(pair<size_t, int>(p_num[0], 0));
 
 				if (need_data) {
 					pid = fork();
@@ -192,8 +193,7 @@ int main(void){
 						return 0;
 					}else{
 						close(data_pipe[1]);
-						for(auto id: data_list) close(id);
-						data_list.clear();
+						
 
 						// signal handler will wait for the child
 						argvs_of_cmd.insert(pair<int, char**>(pid, NULL));
@@ -204,7 +204,9 @@ int main(void){
 			}
 			
 			// child do
-
+			for(auto id: data_list) close(id);
+			data_list.clear();
+			
 			// get the arguments ready
 			for (int j = 0; j < cmd_argc; j++){
 				cmd_argv[j] = (char*) malloc(sizeof(char) * C[i].argv[j].size());
@@ -235,8 +237,7 @@ int main(void){
 				if (file_id < 0) {
 					printf("Failed to open file %s\n", C[i].store_addr.data());
 					free(cmd_argv);
-					C.clear();
-					break;
+					continue;
 				}
 				dup2(file_id, STDOUT_FILENO);
 			}
@@ -248,11 +249,12 @@ int main(void){
 			}
 		}
 		
-		
+// printf("start to wait\n\n");		
 		while (!argvs_of_cmd.empty()) {
 			sig_chld(SIGCHLD);			
 		}
 		C.clear();
+// printf("end wait\n\n");
 	}
 	
 	// wait for all child
