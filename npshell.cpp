@@ -174,7 +174,7 @@ int main(void){
 				if (C[i].number_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], C[i].pipe_to-1));
 				else pipe_num_to.insert(pair<size_t, int>(p_num[0], 0));
 
-				if (need_data) {
+				if (need_data){//} && data_list.size() != 0) {
 					pid = fork();
 					if (pid < 0) {
 						printf("failed to fork\n");
@@ -206,17 +206,12 @@ int main(void){
 			// child do
 			for(auto id: data_list) close(id);
 			data_list.clear();
-			
-			// get the arguments ready
-			for (int j = 0; j < cmd_argc; j++){
-				cmd_argv[j] = (char*) malloc(sizeof(char) * C[i].argv[j].size());
-				strcpy(cmd_argv[j], C[i].argv[j].data());
-			}
-			cmd_argv[cmd_argc] = NULL;
-	
 			// received data from other process
 			if (need_data){
-				close(data_pipe[1]);
+				//if (data_list.size() != 0) {
+					close(data_pipe[1]);
+					
+				//}
 				dup2(data_pipe[0], STDIN_FILENO);
 			}
 
@@ -242,19 +237,25 @@ int main(void){
 				dup2(file_id, STDOUT_FILENO);
 			}
 
+			// get the arguments ready
+			for (int j = 0; j < cmd_argc; j++){
+				cmd_argv[j] = (char*) malloc(sizeof(char) * C[i].argv[j].size());
+				strcpy(cmd_argv[j], C[i].argv[j].data());
+			}
+			cmd_argv[cmd_argc] = new char;
+			cmd_argv[cmd_argc] = NULL;
+
 			// exec!!!!
 			if (execvp(cmd_argv[0], cmd_argv) < 0) {
 				printf("Unknown command: [%s].\n", cmd_argv[0]);
-				return 0;
+				return -1;
 			}
 		}
 		
-// printf("start to wait\n\n");		
 		while (!argvs_of_cmd.empty()) {
 			sig_chld(SIGCHLD);			
 		}
 		C.clear();
-// printf("end wait\n\n");
 	}
 	
 	// wait for all child
@@ -265,32 +266,27 @@ int main(void){
 }
 
 void check_need_data(bool &need, int (&p_num)[2], vector<int> &data_list) {
-	need = false;
-	char buf[1024];
-
 	for (auto s: pipe_num_to) { 
 		// counter == 0 => pipe the data to the command execute next
-		if (s.second == 0) { 
-			// check if this command is terminated
-			while (argvs_of_cmd.find(s.first) != argvs_of_cmd.end()) {
-				// if not, wait until it's terminated
-				sig_chld(SIGCHLD);
-			}
-			if (!need) {
-				need = true;
-				pipe(p_num);
-			}
-
-			data_list.push_back(s.first);
-		}
-		
+		if (s.second == 0) data_list.push_back(s.first);		
 	}
 
+	need = data_list.size() > 0;
+	if (!need) return;
+
+	pipe(p_num);
 	for (auto s: data_list) {
 		pipe_num_to.erase(s);
 	}
+	
+	// if(data_list.size() == 1) {
+	// 	p_num[0] = data_list[0];
+	// 	data_list.clear();
+	// 	return;
+	// }
 
-	// close(p_num[1]);
+	// parent will tackle the data from multiple pipe
+	
 }
 
 void update_pipe_num_to() {
