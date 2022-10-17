@@ -30,6 +30,7 @@ my_cmd tmp;
 
 void err_sys(const char* x);
 void sig_chld(int signo);
+void wait_all_children();
 
 ssize_t writen(int fid, const char *buf, size_t size);
 void Writen(int fid, char *buf, size_t size);
@@ -45,6 +46,7 @@ void process_pipe_info(string s);
 
 int main(void){
 	setenv("PATH", "bin:.", 1);
+// setenv("PATH", "bin", 1);
 	signal(SIGCHLD, sig_chld);
 
 	int should_run = 1; 
@@ -60,8 +62,8 @@ int main(void){
 		
 		if(cin.eof()) break;
 		getline(cin, buf);
-		// if(in.eof()) break;
-		// getline(in, buf);
+// if(in.eof()) break;
+// getline(in, buf);
 		input_length = buf.size();
 
 		if (input_length < 0) {
@@ -117,6 +119,7 @@ int main(void){
 
 		// execute the command
 		for (int i = 0; i < C.size(); i++) {
+			if (i % 50 == 0) wait_all_children();
 			if (C[i].argv[0] == "exit") {
 				C.clear();
 				should_run = false;
@@ -172,9 +175,9 @@ int main(void){
 				if (C[i].number_pipe || i == 0) update_pipe_num_to();
 				
 				if (C[i].number_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], C[i].pipe_to-1));
-				else pipe_num_to.insert(pair<size_t, int>(p_num[0], 0));
+				else if (need_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], 0));
 
-				if (need_data){//} && data_list.size() != 0) {
+				if (need_data && data_list.size() != 0) {
 					pid = fork();
 					if (pid < 0) {
 						printf("failed to fork\n");
@@ -204,14 +207,14 @@ int main(void){
 			}
 			
 			// child do
-			for(auto id: data_list) close(id);
-			data_list.clear();
+			
 			// received data from other process
 			if (need_data){
-				//if (data_list.size() != 0) {
+				if (data_list.size() != 0) {
 					close(data_pipe[1]);
-					
-				//}
+					for(auto id: data_list) close(id);
+					data_list.clear();
+				}
 				dup2(data_pipe[0], STDIN_FILENO);
 			}
 
@@ -239,8 +242,8 @@ int main(void){
 
 			// get the arguments ready
 			for (int j = 0; j < cmd_argc; j++){
-				cmd_argv[j] = (char*) malloc(sizeof(char) * C[i].argv[j].size());
-				strcpy(cmd_argv[j], C[i].argv[j].data());
+				cmd_argv[j] = (char*) malloc(sizeof(char) * C[i].argv[j].size()+1);
+				strcpy(cmd_argv[j], C[i].argv[j].c_str());
 			}
 			cmd_argv[cmd_argc] = new char;
 			cmd_argv[cmd_argc] = NULL;
@@ -251,42 +254,38 @@ int main(void){
 				return -1;
 			}
 		}
-		
-		while (!argvs_of_cmd.empty()) {
-			sig_chld(SIGCHLD);			
-		}
+
+		// wait for all child
+		wait_all_children();
 		C.clear();
 	}
 	
-	// wait for all child
-	while (!argvs_of_cmd.empty()) {
-		sig_chld(SIGCHLD);			
-	}
+	
+	wait_all_children();
 	return 0;
 }
 
-void check_need_data(bool &need, int (&p_num)[2], vector<int> &data_list) {
+void check_need_data(bool &need, int (&data_pipe)[2], vector<int> &data_list) {
+	data_list.clear();
 	for (auto s: pipe_num_to) { 
 		// counter == 0 => pipe the data to the command execute next
 		if (s.second == 0) data_list.push_back(s.first);		
 	}
-
-	need = data_list.size() > 0;
+	need = (data_list.size() > 0);
 	if (!need) return;
+	
+	if(data_list.size() == 1) {
+		data_pipe[0] = data_list[0];
+		pipe_num_to.erase(data_list[0]);
+		data_list.clear();
+		return;
+	}
 
-	pipe(p_num);
+	// parent will tackle the data from multiple pipe
+	pipe(data_pipe);
 	for (auto s: data_list) {
 		pipe_num_to.erase(s);
 	}
-	
-	// if(data_list.size() == 1) {
-	// 	p_num[0] = data_list[0];
-	// 	data_list.clear();
-	// 	return;
-	// }
-
-	// parent will tackle the data from multiple pipe
-	
 }
 
 void update_pipe_num_to() {
@@ -311,6 +310,12 @@ void process_pipe_info(string s) {
 	tmp.number_pipe = true;
 	for (int i = 1; i < s.size(); i++)
 		tmp.pipe_to = tmp.pipe_to *10 + (int)(s[i] - '0');
+}
+
+void wait_all_children() {
+	while (!argvs_of_cmd.empty()) {
+		sig_chld(SIGCHLD);			
+	}
 }
 
 void sig_chld(int signo)
