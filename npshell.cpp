@@ -10,8 +10,6 @@
 
 #include <fstream>
 
-#define MAX_LINE 15000
-
 using namespace std;
 
 struct my_cmd{
@@ -57,16 +55,13 @@ int main(void){
 	int should_run = 1; 
 	string s;
 	while(should_run){
-		printf("%% ");
-		
-		int input_length;
-
-		string buf = "";
-		
 		if(cin.eof()) break;
-		getline(cin, buf);
+
+		printf("%% "); fflush(stdout);
 		
-		input_length = buf.size();
+		string buf = "";
+		getline(cin, buf);
+		int input_length = buf.size();
 
 		if (input_length < 0) {
 			err_sys("failed to read\n");
@@ -123,21 +118,26 @@ int main(void){
 		for (int i = 0; i < C.size(); i++) {
 			if (i % 50 == 0 && i != 0) wait_all_children();
 			if (C[i].argv[0] == "exit") {
+				update_pipe_num_to();
 				C.clear();
 				should_run = false;
 				break;
 			}
 			if (C[i].argv[0] == "setenv") {
-				if (C[i].argv.size() < 3) {
-					printf("Usage: setenv [Variable] [Value].\n");
+				update_pipe_num_to();
+				if (C[i].argv.size() != 3) {
+					char err[] = "Usage: setenv [Variable] [Value].\n";
+					Writen(STDERR_FILENO, err, sizeof(err));
 					continue;
 				}
 				setenv(C[i].argv[1].data(), C[i].argv[2].data(), 1);
 				continue;
 			}
 			if (C[i].argv[0] == "printenv") {
-				if (C[i].argv.size() < 2) {
-					printf("Usage: printenv [Variable].\n");
+				update_pipe_num_to();
+				if (C[i].argv.size() != 2) {
+					char err[] = "Usage: printenv [Variable].\n";
+					Writen(STDERR_FILENO, err, sizeof(err));
 					continue;
 				}
 				char* env_info = getenv(C[i].argv[1].data());
@@ -163,7 +163,8 @@ int main(void){
 			// fork
 			pid = fork();
 			if (pid < 0) {
-				printf("failed to fork\n");
+				char err[] = "failed to fork\n";
+				Writen(STDERR_FILENO, err, sizeof(err));
 				return -1;
 			}
 
@@ -187,7 +188,8 @@ int main(void){
 					// fork a child to process
 					pid = fork();
 					if (pid < 0) {
-						printf("failed to fork\n");
+						char err[] = "failed to fork\n";
+						Writen(STDERR_FILENO, err, sizeof(err));
 						return -1;
 					}
 
@@ -245,7 +247,10 @@ int main(void){
 				ftruncate(file_id, 0);
 				lseek(file_id, 0, SEEK_SET);
 				if (file_id < 0) {
-					printf("Failed to open file %s\n", C[i].store_addr.data());
+					string err_s = "Failed to open file" + C[i].store_addr + "\n";
+					char err[err_s.size()];
+					strcpy(err, err_s.c_str());
+					Writen(STDERR_FILENO, err, sizeof(err));
 					free(cmd.argv);
 					continue;
 				}
@@ -262,7 +267,15 @@ int main(void){
 
 			// exec!!!!
 			if (execvp(cmd.argv[0], cmd.argv) < 0) {
-				printf("Unknown command: [%s].\n", cmd.argv[0]);
+				string err_s = cmd.argv[0];
+				err_s = "Unknown command: [" + err_s + "].\n";
+				char err[err_s.size()];
+				strcpy(err, err_s.c_str());
+				Writen(STDERR_FILENO, err, sizeof(err));
+
+				// close pipe
+				if (need_data) close(data_pipe[0]);
+				if (need_pipe) close(p_num[1]);
 				return -1;
 			}
 		}
