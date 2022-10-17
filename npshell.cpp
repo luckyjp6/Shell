@@ -46,15 +46,13 @@ void process_pipe_info(string s);
 
 int main(void){
 	setenv("PATH", "bin:.", 1);
-// setenv("PATH", "bin", 1);
 	signal(SIGCHLD, sig_chld);
 
 	int should_run = 1; 
-// ifstream in("1.txt", ios::in|ios::binary);
 	string s;
 	char **cmd_argv;
 	while(should_run){
-		printf("%% ");// fflush(stdout);
+		printf("%% ");
 		
 		int input_length;
 
@@ -62,8 +60,6 @@ int main(void){
 		
 		if(cin.eof()) break;
 		getline(cin, buf);
-// if(in.eof()) break;
-// getline(in, buf);
 		input_length = buf.size();
 
 		if (input_length < 0) {
@@ -119,7 +115,6 @@ int main(void){
 
 		// execute the command
 		for (int i = 0; i < C.size(); i++) {
-// cout << "command " << C[i].argv[0] << endl;
 			if (i % 50 == 0 && i != 0) wait_all_children();
 			if (C[i].argv[0] == "exit") {
 				C.clear();
@@ -173,7 +168,7 @@ int main(void){
 				argvs_of_cmd.insert(pair<size_t, char**>(pid, cmd_argv));
 				argcs_of_cmd.insert(pair<size_t, int>(pid, cmd_argc+1));
 				
-				if (C[i].number_pipe || i == 0) update_pipe_num_to();
+				if (C[i].number_pipe || i == C.size()-1) update_pipe_num_to();
 				
 				if (C[i].number_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], C[i].pipe_to-1));//,cout << "parent add pipe: " << C[i].pipe_to-1 << endl;
 				else if (need_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], 0));
@@ -258,9 +253,7 @@ int main(void){
 		}
 
 		// wait for all child
-		// cout << "Waiting for child\n";
 		if (C[C.size()-1].number_pipe != true) wait_all_children();
-		// cout << "End waiting\n";
 		C.clear();
 	}
 	
@@ -294,8 +287,6 @@ void check_need_data(bool &need, int (&data_pipe)[2], vector<int> &data_list) {
 
 void update_pipe_num_to() { 
 	vector<int> wait_to_erase;
-	// cout << "pipe_num_to size: " << pipe_num_to.size() << endl;
-	// for (auto a: pipe_num_to) cout << a.second << endl;
 	for (auto &s: pipe_num_to) {
 		s.second--;
 		if (s.second < 0) wait_to_erase.push_back(s.first);
@@ -329,7 +320,6 @@ void sig_chld(int signo)
 	int	pid, stat;
 
 	while ( (pid = waitpid(-1, &stat, WNOHANG)) > 0){
-        // printf("child %d terminated\n", pid);
 		
 		// free the memory!!
 		char **cmd_argv = argvs_of_cmd[pid];
