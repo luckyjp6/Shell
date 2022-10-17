@@ -29,8 +29,6 @@ struct args{
 };
 
 vector<my_cmd> C;
-// map< size_t, char** > argvs_of_cmd;
-// map< size_t, int > argcs_of_cmd;
 map< size_t, args> args_of_cmd;
 map< size_t, int > pipe_num_to; // pipe_num, counter
 my_cmd tmp;
@@ -55,9 +53,6 @@ void process_pipe_info(string s);
 int main(void){
 	setenv("PATH", "bin:.", 1);
 	signal(SIGCHLD, sig_chld);
-
-// setenv("PATH", "bin", 1);
-// ifstream in("1.txt", ios::in|ios::binary);
 	
 	int should_run = 1; 
 	string s;
@@ -70,9 +65,6 @@ int main(void){
 		
 		if(cin.eof()) break;
 		getline(cin, buf);
-
-// if(in.eof()) break;
-// getline(in, buf);
 		
 		input_length = buf.size();
 
@@ -137,7 +129,7 @@ int main(void){
 			}
 			if (C[i].argv[0] == "setenv") {
 				if (C[i].argv.size() < 3) {
-					cout << "Usage: setenv [Variable] [Value].\n";
+					printf("Usage: setenv [Variable] [Value].\n");
 					continue;
 				}
 				setenv(C[i].argv[1].data(), C[i].argv[2].data(), 1);
@@ -145,7 +137,7 @@ int main(void){
 			}
 			if (C[i].argv[0] == "printenv") {
 				if (C[i].argv.size() < 2) {
-					cout << "Usage: printenv [Variable].\n";
+					printf("Usage: printenv [Variable].\n");
 					continue;
 				}
 				char* env_info = getenv(C[i].argv[1].data());
@@ -182,8 +174,6 @@ int main(void){
 
 				// record memory allocate address
 				args_of_cmd.insert(pair<size_t, args> (pid, cmd));
-				// argvs_of_cmd.insert(pair<size_t, char**>(pid, cmd_argv));
-				// argcs_of_cmd.insert(pair<size_t, int>(pid, cmd_argc+1));
 				
 				// update when new line
 				if (C[i].number_pipe || i == C.size()-1) update_pipe_num_to();
@@ -221,8 +211,6 @@ int main(void){
 						// information for signal handler about how to handle this child
 						cmd.argv = NULL; cmd.argc = 0; cmd.number_pipe = false;
 						args_of_cmd.insert(pair<size_t, args> (pid, cmd));
-						// argvs_of_cmd.insert(pair<int, char**>(pid, NULL));
-						// argcs_of_cmd.insert(pair<int, int>(pid, 0));
 					}
 				}
 
@@ -291,13 +279,17 @@ int main(void){
 
 void check_need_data(bool &need, int (&data_pipe)[2], vector<int> &data_list) {
 	data_list.clear();
-	for (auto s: pipe_num_to) { 
-		// counter == 0 => pipe the data to the command execute next
+
+	// counter == 0 => pipe the data to the command that execute next
+	for (auto s: pipe_num_to) {
 		if (s.second == 0) data_list.push_back(s.first);		
 	}
+
 	need = (data_list.size() > 0);
 	if (!need) return;
 
+	// if only one pipe of data needed
+	// directly assign read p_id to data_pipe
 	if(data_list.size() == 1) {
 		data_pipe[0] = data_list[0];
 		pipe_num_to.erase(data_list[0]);
@@ -314,10 +306,13 @@ void check_need_data(bool &need, int (&data_pipe)[2], vector<int> &data_list) {
 
 void update_pipe_num_to() { 
 	vector<int> wait_to_erase;
+	// update pipe counter
 	for (auto &s: pipe_num_to) {
 		s.second--;
 		if (s.second < 0) wait_to_erase.push_back(s.first);
 	}
+
+	// erase unnecessary pipe id
 	for (auto s: wait_to_erase) pipe_num_to.erase(s);
 }
 
@@ -330,14 +325,14 @@ void clear_tmp() {
 }
 
 void process_pipe_info(string s) {
-	if (s[0] == '!') tmp.err = true;
+	// only process number pipe
 	tmp.number_pipe = true;
+	if (s[0] == '!') tmp.err = true;
 	for (int i = 1; i < s.size(); i++)
 		tmp.pipe_to = tmp.pipe_to *10 + (int)(s[i] - '0');
 }
 
 void wait_all_children() {
-	// while (!argvs_of_cmd.empty()) {
 	while (!args_of_cmd.empty()) {
 		sig_chld(SIGCHLD);			
 	}
@@ -346,6 +341,9 @@ void wait_all_children() {
 void conditional_wait() {
 	while(!args_of_cmd.empty()) {
 		sig_chld(SIGCHLD);
+
+		// stop waiting if remaining are all commands with number pipe
+		// the output are not immediately needed
 		bool must_wait = false;
 		for (auto s:args_of_cmd) {
 			if (s.second.number_pipe == false) {
@@ -366,8 +364,6 @@ void sig_chld(int signo)
 		// free the memory!!
 		char **cmd_argv = args_of_cmd[pid].argv;
 		args_of_cmd.erase(pid);
-		// argvs_of_cmd.erase(pid);
-		// argcs_of_cmd.erase(pid);
 		
 		if (cmd_argv != NULL) free(cmd_argv);
     }
@@ -389,12 +385,8 @@ ssize_t	writen(int fid, const char *buf, size_t size) {
 	nremain = size;
 	while (nremain > 0) {
 		if ( (nwritten = write(fid, buf_now, nremain)) <= 0) {
-			// not interrupt by write()
-			if (nwritten < 0 && errno == EINTR)
-				nwritten = 0;
-			// error
-			else
-				return -1;
+			if (nwritten < 0 && errno == EINTR) nwritten = 0; // the error is not from write()
+			else return -1; // write error
 		}
 
 		nremain -= nwritten;
@@ -417,13 +409,11 @@ ssize_t	readn(int fid, char *buf, size_t size) {
 	nremain = size;
 	while (nremain > 0) {
 		if ( (nread = read(fid, buf_now, nremain)) < 0) {
-			if (errno == EINTR)
-				nread = 0;
-			else
-				return -1;
-		} else if (nread == 0) { // EOF
-			break;
-		}
+			if (errno == EINTR) nread = 0; // the error is not from read
+			else return -1; // read error
+		} 
+		else if (nread == 0) break; // EOF
+
 		nremain -= nread;
 		buf_now += nread;
 	}
