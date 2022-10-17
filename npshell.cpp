@@ -54,7 +54,7 @@ int main(void){
 	string s;
 	char **cmd_argv;
 	while(should_run){
-		printf("%% "); fflush(stdout);
+		printf("%% ");// fflush(stdout);
 		
 		int input_length;
 
@@ -119,7 +119,8 @@ int main(void){
 
 		// execute the command
 		for (int i = 0; i < C.size(); i++) {
-			if (i % 50 == 0) wait_all_children();
+// cout << "command " << C[i].argv[0] << endl;
+			if (i % 50 == 0 && i != 0) wait_all_children();
 			if (C[i].argv[0] == "exit") {
 				C.clear();
 				should_run = false;
@@ -142,7 +143,7 @@ int main(void){
 				if (env_info != NULL) printf("%s\n", env_info);
 				continue;
 			}
-
+			
 			size_t cmd_argc = C[i].argv.size();
 			cmd_argv = (char**) malloc(sizeof(char*) * (cmd_argc+1));
 
@@ -153,7 +154,7 @@ int main(void){
 
 			// record pipe descripter for the command behind
 			if (need_pipe) pipe(p_num);
-			
+	
 			check_need_data(need_data, data_pipe, data_list);
 			
 			// fork
@@ -162,7 +163,7 @@ int main(void){
 				printf("failed to fork\n");
 				return -1;
 			}
-			
+
 			// parent do
 			if (pid > 0) {
 				if (need_pipe) close(p_num[1]);
@@ -174,7 +175,7 @@ int main(void){
 				
 				if (C[i].number_pipe || i == 0) update_pipe_num_to();
 				
-				if (C[i].number_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], C[i].pipe_to-1));
+				if (C[i].number_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], C[i].pipe_to-1));//,cout << "parent add pipe: " << C[i].pipe_to-1 << endl;
 				else if (need_pipe) pipe_num_to.insert(pair<size_t, int>(p_num[0], 0));
 
 				if (need_data && data_list.size() != 0) {
@@ -202,12 +203,13 @@ int main(void){
 						argvs_of_cmd.insert(pair<int, char**>(pid, NULL));
 						argcs_of_cmd.insert(pair<int, int>(pid, 0));
 					}
-				}				
+				}
+
 				continue;
 			}
 			
 			// child do
-			
+					
 			// received data from other process
 			if (need_data){
 				if (data_list.size() != 0) {
@@ -217,7 +219,7 @@ int main(void){
 				}
 				dup2(data_pipe[0], STDIN_FILENO);
 			}
-
+			
 			// pipe stderr
 			if (C[i].err) dup2(p_num[1], STDERR_FILENO);
 			
@@ -256,7 +258,9 @@ int main(void){
 		}
 
 		// wait for all child
-		wait_all_children();
+		// cout << "Waiting for child\n";
+		if (C[C.size()-1].number_pipe != true) wait_all_children();
+		// cout << "End waiting\n";
 		C.clear();
 	}
 	
@@ -273,7 +277,7 @@ void check_need_data(bool &need, int (&data_pipe)[2], vector<int> &data_list) {
 	}
 	need = (data_list.size() > 0);
 	if (!need) return;
-	
+
 	if(data_list.size() == 1) {
 		data_pipe[0] = data_list[0];
 		pipe_num_to.erase(data_list[0]);
@@ -288,8 +292,10 @@ void check_need_data(bool &need, int (&data_pipe)[2], vector<int> &data_list) {
 	}
 }
 
-void update_pipe_num_to() {
+void update_pipe_num_to() { 
 	vector<int> wait_to_erase;
+	// cout << "pipe_num_to size: " << pipe_num_to.size() << endl;
+	// for (auto a: pipe_num_to) cout << a.second << endl;
 	for (auto &s: pipe_num_to) {
 		s.second--;
 		if (s.second < 0) wait_to_erase.push_back(s.first);
