@@ -23,7 +23,8 @@ struct my_cmd{
 struct args{
 	char **argv;
 	int argc;
-	bool number_pipe;
+	bool number_pipe = false;
+	int p_num = -1;
 };
 
 vector<my_cmd> C;
@@ -47,11 +48,10 @@ void update_pipe_num_to();
 void clear_tmp();
 void process_pipe_info(string s);
 
-
 int main(void){
 	setenv("PATH", "bin:.", 1);
 	signal(SIGCHLD, sig_chld);
-	
+
 	int should_run = 1; 
 	string s;
 	while(should_run){
@@ -156,8 +156,11 @@ int main(void){
 			vector<int> data_list;
 
 			// record pipe descripter for the command behind
-			if (need_pipe) pipe(p_num);
-	
+			if (need_pipe) {
+				pipe(p_num);
+				cmd.p_num = p_num[0];
+			}
+
 			check_need_data(need_data, data_pipe, data_list);
 			
 			// fork
@@ -211,7 +214,7 @@ int main(void){
 						data_list.clear();
 						
 						// information for signal handler about how to handle this child
-						cmd.argv = NULL; cmd.argc = 0; cmd.number_pipe = false;
+						cmd.argv = NULL; cmd.argc = 0;
 						args_of_cmd.insert(pair<size_t, args> (pid, cmd));
 					}
 				}
@@ -359,7 +362,8 @@ void conditional_wait() {
 		// the output are not immediately needed
 		bool must_wait = false;
 		for (auto s:args_of_cmd) {
-			if (s.second.number_pipe == false) {
+			int p_num = s.second.p_num;
+			if (pipe_num_to.find(p_num) == pipe_num_to.end()) {
 				must_wait = true;
 				break;
 			}
