@@ -14,7 +14,7 @@ using namespace std;
 
 struct my_cmd{
 	vector<string> argv;
-	int pipe_to = 0;
+	int pipe_to = 0; 
 	string store_addr = "";
 	bool err = false;
 	bool number_pipe = false;
@@ -24,58 +24,62 @@ struct args{
 	char **argv;
 	int argc;
 	bool number_pipe = false;
-	int p_num = -1;
+	int p_num = -1; // pipe id, used in conditional_wait()
 };
 
-vector<my_cmd> C;
-map< size_t, args> args_of_cmd;
+vector<my_cmd> C; // after read one line of commands, stores them here
+map< size_t, args> args_of_cmd; // pid, args
 map< size_t, int > pipe_num_to; // pipe_num, counter
-my_cmd tmp;
+my_cmd tmp; // used in clear_tmp() and process_pipe_info()
 
-void err_sys(const char* x);
-void sig_chld(int signo);
-void wait_all_children();
-void conditional_wait();
+void err_sys(const char* x); // used in W/writen() and R/readn()
+void sig_chld(int signo); // signal handler
+void wait_all_children(); // wait for all children at the end of parent process
+void conditional_wait(); // conditionally wait for some children at the end of each line
 
+// safer read and write
 ssize_t writen(int fid, const char *buf, size_t size);
 void Writen(int fid, char *buf, size_t size);
 ssize_t	readn(int fid, char *buf, size_t size);
 ssize_t Readn(int fid, char *buf, size_t size);
 
-void check_need_data(bool &need, int (&p_num)[2], vector<int> &data_list);
+void check_need_data(bool &need, int (&p_num)[2], vector<int> &data_list); 
 void update_pipe_num_to();
 
 void clear_tmp();
-void process_pipe_info(string s);
+void process_pipe_info(string s); // process input command's pipe info
 
 int main(void){
 	setenv("PATH", "bin:.", 1);
 	signal(SIGCHLD, sig_chld);
 
 	int should_run = 1; 
-	string s;
+	
 	while(should_run){
-		if(cin.eof()) break;
+
+		if (cin.eof()) break;
 
 		printf("%% "); fflush(stdout);
 		
 		string buf = "";
 		getline(cin, buf);
+
 		int input_length = buf.size();
 
 		if (input_length < 0) {
 			err_sys("failed to read\n");
 			return -1;
 		}
-		else if (input_length <= 1) continue;
+		else if (input_length <= 1) continue; // blank line
 		
+		// getline will not read '\n'
 		if (buf[input_length-1] != '\n') {
 			buf += '\n';
 			input_length ++;
 		}
 		
 		// process the argument
-		s = "";
+		string s = "";
 		bool storage_flg = false;
 		for(int i = 0; i < input_length; i++){
 			if(buf[i] == ' ' || i == input_length-1 || buf[i] == '\n' || buf[i] == '\r'){
@@ -116,7 +120,7 @@ int main(void){
 
 		// execute the command
 		for (int i = 0; i < C.size(); i++) {
-			if (i % 50 == 0 && i != 0) wait_all_children();
+			if (i % 100 == 0 && i != 0) conditional_wait();
 			if (C[i].argv[0] == "exit") {
 				update_pipe_num_to();
 				C.clear();
@@ -155,7 +159,7 @@ int main(void){
 			int p_num[2], data_pipe[2];
 			vector<int> data_list;
 
-			// record pipe descripter for the command behind
+			// record pipe descripter for the command behind to read
 			if (need_pipe) {
 				pipe(p_num);
 				cmd.p_num = p_num[0];
@@ -294,6 +298,9 @@ int main(void){
 }
 
 void check_need_data(bool &need, int (&data_pipe)[2], vector<int> &data_list) {
+	// get all needed data for current command into datalist 
+	// (datalist stores the needed read end of the pipe)
+	
 	data_list.clear();
 
 	// counter == 0 => pipe the data to the command that execute next
@@ -368,7 +375,9 @@ void conditional_wait() {
 				break;
 			}
 		}
-		if (!must_wait) break;
+		if (!must_wait) {
+			break;
+		}
 	}
 }
 
