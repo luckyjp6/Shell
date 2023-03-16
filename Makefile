@@ -1,11 +1,11 @@
-TARGET = npshell.o
+TARGET = shell.o
 
-npshell: $(TARGET)
-	g++ -ggdb3 -o npshell $(TARGET)
+shell: $(TARGET)
+	g++ -ggdb3 -o shell $(TARGET)
 
-npshell.o: npshell.cpp
-	g++ -ggdb3 -c npshell.cpp
+shell.o: shell.cpp
+	g++ -ggdb3 -c shell.cpp
 
 .PHONY: clean
 clean:
-	-rm edit npshell.o
+	-rm shell.o shell
